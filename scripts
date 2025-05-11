@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# Обновление пакетов
+echo "Обновление репозиториев..."
+apt update -y
+
+# Установка Apache, PHP и MariaDB
+echo "Установка Apache, PHP и MariaDB..."
+apt install apache2 php mariadb-server php-mysql -y
+
+# Запуск и автозапуск служб
+echo "Запуск и настройка служб..."
+systemctl start apache2
+systemctl enable apache2
+systemctl start mariadb
+systemctl enable mariadb
+
+# Безопасная настройка MariaDB
+echo "Безопасная настройка MariaDB..."
+mysql_secure_installation <<EOF
+
+y
+password
+password
+y
+n
+y
+y
+EOF
+
+# Создание базы данных и пользователя для DVWA  
+echo "Создание базы данных и пользователя для DVWA..."
+mysql -u root -ppassword <<EOF
+CREATE DATABASE dvwa;
+CREATE USER 'dvwa'@'localhost' IDENTIFIED BY 'password';
+GRANT ALL PRIVILEGES ON dvwa.* TO 'dvwa'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+EOF
+
+# Установка DVWA
+echo "Установка DVWA..."
+cd /var/www/html
+rm -rf dvwa
+git clone https://github.com/digininja/DVWA.git  dvwa
+chown -R www-data:www-data dvwa
+chmod -R 755 dvwa
+
+# Настройка конфигурации DVWA
+echo "Настройка конфигурации DVWA..."
+cp dvwa/config/config.inc.php.dist dvwa/config/config.inc.php
+sed -i 's/$_DVWA\[\'db_password\'\] = \'\';/$_DVWA[\'db_password\'] = \'password\';/' dvwa/config/config.inc.php
+
+# Настройка rsyslog для отправки логов в Wazuh
+echo "Настройка rsyslog для отправки логов в Wazuh..."
+apt install rsyslog -y
+echo "*.* @<IP_WAZUH_SERVER>:1514" >> /etc/rsyslog.conf
+systemctl restart rsyslog
+
+# Установка Wazuh Agent (если не установлен)
+echo "Установка Wazuh Agent..."
+curl -so /etc/apt/trusted.gpg.d/wazuh.gpg https://packages.wazuh.com/key.gpg 
+echo "deb https://packages.wazuh.com/4.x/apt/  stable main" | sudo tee -a /etc/apt/sources.list.d/wazuh.list
+apt update && apt install wazuh-agent -y
+sed -i "s/WAZUH_MANAGER=.*/WAZUH_MANAGER=<IP_WAZUH_SERVER>/g" /var/ossec/etc/ossec.conf
+systemctl restart wazuh-agent
+
+echo "Настройка завершена! Теперь можно тестировать атаки."
